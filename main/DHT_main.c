@@ -18,21 +18,24 @@
 
 #include "DHT22.h"
 
+#define DHT_PIN 4
+
 void DHT_task(void *pvParameter)
 {
-	setDHTgpio( 4 );
+	dhtInit(DHT_PIN);
 	printf( "Starting DHT Task\n\n");
 
 	while(1) {
-	
 		printf("=== Reading DHT ===\n" );
-		int ret = readDHT();
-		
+		float temperature;
+		float humidity;
+		int ret = dhtRead(DHT_PIN, &temperature, &humidity);
+
 		errorHandler(ret);
 
-		printf( "Hum %.1f\n", getHumidity() );
-		printf( "Tmp %.1f\n", getTemperature() );
-		
+		printf( "Hum %.1f\n", humidity );
+		printf( "Tmp %.1f\n", temperature );
+
 		// -- wait at least 2 sec before reading again ------------
 		// The interval of whole process must be beyond 2 seconds !! 
 		vTaskDelay( 3000 / portTICK_RATE_MS );
@@ -45,4 +48,3 @@ void app_main()
 	vTaskDelay( 1000 / portTICK_RATE_MS );
 	xTaskCreate( &DHT_task, "DHT_task", 2048, NULL, 5, NULL );
 }
-

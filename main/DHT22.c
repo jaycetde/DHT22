@@ -28,45 +28,31 @@
 
 #include "DHT22.h"
 
+#define DHT_DATA_NUM_BYTES 5 // to complete 40 = 5*8 Bits
+
 // == global defines =============================================
 
-static const char* TAG = "DHT";
-
-int DHTgpio = 4;				// my default DHT pin = 4
-float humidity = 0.;
-float temperature = 0.;
-
-// == set the DHT used pin=========================================
-
-void setDHTgpio( int gpio )
-{
-	DHTgpio = gpio;
-}
-
-// == get temp & hum =============================================
-
-float getHumidity() { return humidity; }
-float getTemperature() { return temperature; }
+static const char *TAG = "DHT";
 
 // == error handler ===============================================
 
-void errorHandler(int response)
+void dhtErrorHandler(int response)
 {
-	switch(response) {
-	
-		case DHT_TIMEOUT_ERROR :
-			ESP_LOGE( TAG, "Sensor Timeout\n" );
-			break;
+	switch (response)
+	{
+	case DHT_OK:
+		break;
 
-		case DHT_CHECKSUM_ERROR:
-			ESP_LOGE( TAG, "CheckSum error\n" );
-			break;
+	case DHT_TIMEOUT_ERROR:
+		ESP_LOGE(TAG, "Sensor Timeout\n");
+		break;
 
-		case DHT_OK:
-			break;
+	case DHT_CHECKSUM_ERROR:
+		ESP_LOGE(TAG, "CheckSum error\n");
+		break;
 
-		default :
-			ESP_LOGE( TAG, "Unknown error\n" );
+	default:
+		ESP_LOGE(TAG, "Unknown error\n");
 	}
 }
 
@@ -79,19 +65,20 @@ void errorHandler(int response)
 ;
 ;--------------------------------------------------------------------------------*/
 
-int getSignalLevel( int usTimeOut, bool state )
+int getSignalTiming(int gpioPin, bool state, int usTimeOut)
 {
 
 	int uSec = 0;
-	while( gpio_get_level(DHTgpio)==state ) {
+	while (gpio_get_level(gpioPin) == state)
+	{
 
-		if( uSec > usTimeOut ) 
+		if (uSec > usTimeOut)
 			return -1;
-		
+
 		++uSec;
-		ets_delay_us(1);		// uSec delay
+		ets_delay_us(1); // uSec delay
 	}
-	
+
 	return uSec;
 }
 
@@ -135,98 +122,103 @@ To request data from DHT:
 
 ;----------------------------------------------------------------------------*/
 
-#define MAXdhtData 5	// to complete 40 = 5*8 Bits
-
-int readDHT()
+void dhtInit(int gpioPin)
 {
-int uSec = 0;
+	gpio_set_direction(gpioPIn, GPIO_MODE_OUTPUT);
+	gpio_set_level(gpioPin, 1);
+}
 
-uint8_t dhtData[MAXdhtData];
-uint8_t byteInx = 0;
-uint8_t bitInx = 7;
+int dhtRead(int gpioPin, float *temperature, float *humidity)
+{
+	int lowUSec = 0;
+	int uSec = 0;
 
-	for (int k = 0; k<MAXdhtData; k++) 
-		dhtData[k] = 0;
+	uint8_t dhtData[DHT_DATA_NUM_BYTES];
+	uint8_t byteInx = 0;
+	uint8_t bitInx = 7;
+
+	// Should already be initialized as 0
+	// for (int k = 0; k < MAXdhtData; k++)
+	// 	dhtData[k] = 0;
 
 	// == Send start signal to DHT sensor ===========
 
-	gpio_set_direction( DHTgpio, GPIO_MODE_OUTPUT );
+	gpio_set_direction(gpioPin, GPIO_MODE_OUTPUT);
 
-	// pull down for 3 ms for a smooth and nice wake up 
-	gpio_set_level( DHTgpio, 0 );
-	ets_delay_us( 3000 );			
+	// pull down for 5 ms for a smooth and nice wake up
+	gpio_set_level(gpioPin, 0);
+	ets_delay_us(5000);
 
 	// pull up for 25 us for a gentile asking for data
-	gpio_set_level( DHTgpio, 1 );
-	ets_delay_us( 25 );
+	gpio_set_level(gpioPin, 1);
+	// ets_delay_us(25); // No delay necessary, the data line will stay pulled up
 
-	gpio_set_direction( DHTgpio, GPIO_MODE_INPUT );		// change to input mode
-  
+	gpio_set_direction(gpioPin, GPIO_MODE_INPUT); // change to input mode
+
+	// == Wait for DHT to pull the line down ====
+	uSec = getSignalLevel(gpioPin, 1, 100);
+	if (uSec < 0)
+		return DHT_TIMEOUT_ERROR;
+
 	// == DHT will keep the line low for 80 us and then high for 80us ====
-
-	uSec = getSignalLevel( 85, 0 );
-//	ESP_LOGI( TAG, "Response = %d", uSec );
-	if( uSec<0 ) return DHT_TIMEOUT_ERROR; 
+	uSec = getSignalLevel(gpioPin, 0, 100);
+	if (uSec < 0)
+		return DHT_TIMEOUT_ERROR;
 
 	// -- 80us up ------------------------
 
-	uSec = getSignalLevel( 85, 1 );
-//	ESP_LOGI( TAG, "Response = %d", uSec );
-	if( uSec<0 ) return DHT_TIMEOUT_ERROR;
+	uSec = getSignalLevel(gpioPin, 0, 100);
+	if (uSec < 0)
+		return DHT_TIMEOUT_ERROR;
 
 	// == No errors, read the 40 data bits ================
-  
-	for( int k = 0; k < 40; k++ ) {
 
+	for (int k = 0; k < 40; k++)
+	{
 		// -- starts new data transmission with >50us low signal
 
-		uSec = getSignalLevel( 56, 0 );
-		if( uSec<0 ) return DHT_TIMEOUT_ERROR;
+		lowUSec = getSignalLevel(gpioPin, 0, 70);
+		if (lowUSec < 0)
+			return DHT_TIMEOUT_ERROR;
 
 		// -- check to see if after >70us rx data is a 0 or a 1
 
-		uSec = getSignalLevel( 75, 1 );
-		if( uSec<0 ) return DHT_TIMEOUT_ERROR;
+		uSec = getSignalLevel(gpioPin, 1, 100);
+		if (uSec < 0)
+			return DHT_TIMEOUT_ERROR;
 
 		// add the current read to the output data
-		// since all dhtData array where set to 0 at the start, 
+		// since all dhtData array where set to 0 at the start,
 		// only look for "1" (>28us us)
-	
-		if (uSec > 40) {
-			dhtData[ byteInx ] |= (1 << bitInx);
-			}
-	
+
+		if (uSec > lowUSec)
+		{
+			dhtData[byteInx] |= (1 << bitInx);
+		}
+
 		// index to next byte
 
-		if (bitInx == 0) { bitInx = 7; ++byteInx; }
-		else bitInx--;
+		if (bitInx == 0)
+		{
+			bitInx = 7;
+			++byteInx;
+		}
+		else
+			bitInx--;
 	}
-
-	// == get humidity from Data[0] and Data[1] ==========================
-
-	humidity = dhtData[0];
-	humidity *= 0x100;					// >> 8
-	humidity += dhtData[1];
-	humidity /= 10;						// get the decimal
-
-	// == get temp from Data[2] and Data[3]
-	
-	temperature = dhtData[2] & 0x7F;	
-	temperature *= 0x100;				// >> 8
-	temperature += dhtData[3];
-	temperature /= 10;
-
-	if( dhtData[2] & 0x80 ) 			// negative temp, brrr it's freezing
-		temperature *= -1;
-
 
 	// == verify if checksum is ok ===========================================
 	// Checksum is the sum of Data 8 bits masked out 0xFF
-	
-	if (dhtData[4] == ((dhtData[0] + dhtData[1] + dhtData[2] + dhtData[3]) & 0xFF)) 
+	if (dhtData[4] == ((dhtData[0] + dhtData[1] + dhtData[2] + dhtData[3]) & 0xFF))
+	{
+		*humidity = (dhtData[0] * 256 + dhtData[1]) / 10.0f;
+		*temperature = ((dhtData[2] & 0x7F) * 256 + dhtData[3]) / 10.0f;
+
+		if (dhtData[2] & 0x80) // negative temp, brrr it's freezing
+			*temperature *= -1.0f;
+
 		return DHT_OK;
+	}
 
-	else 
-		return DHT_CHECKSUM_ERROR;
+	return DHT_CHECKSUM_ERROR;
 }
-
